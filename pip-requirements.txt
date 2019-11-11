@@ -1,0 +1,7 @@
+PySide2
+# OpenGL requirements
+image
+numpy
+matplotlib
+# implementation of Dynamic Time Warping
+fastdtw
