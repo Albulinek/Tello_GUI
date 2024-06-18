@@ -9,7 +9,7 @@ STEP = 0
 
 class Population:
     def __init__(self, test_data):
-        self.population_size = 100
+        self.population_size = 10
         self.population = []
         self.matingpool = []
         self.test_data = test_data
@@ -29,6 +29,19 @@ class Population:
                 self.natural_selection()
                 print('max fitness', self.max_fitness)
                 print('----------------------\n')
+                if i % 10 == 0:
+                    fig = plt.figure()
+                    best_drone_idx = max(range(len(self.population)), key=lambda i: self.population[i].get_fitness())
+                    for pop_idx, pop in enumerate(self.population):
+                        if pop_idx == best_drone_idx:
+                            plt.plot(*pop.get_dna().get_genes()[:, :-1].T, 'g-')
+                        else:
+                            plt.plot(*pop.get_dna().get_genes()[:, :-1].T, 'r-')
+                    plt.plot(*self.test_data.T, 'b-')
+                    plt.show()
+                    plt.savefig(f'test_gen{i}.png')
+                    plt.close(fig)
+                
         
         #if (self.max_fitness > 20):
 
@@ -36,6 +49,7 @@ class Population:
             plt.plot(*pop.get_dna().get_genes()[:, :-1].T)
         plt.plot(*self.test_data.T)
         plt.show()
+        plt.savefig('test.png')
 
     def evaluate_fitness(self):
         maxfit = 0
@@ -71,32 +85,24 @@ class Population:
                 self.matingpool.append(self.population[i])
 
     def natural_selection(self):
+        # Create a new population of the same size
         new_population = []
-
-        i = 0
-        for drone in self.population:
-            if i == self.best:
-                child = drone
-            else:
-                # pick random partners
-                parentA = random.choice(self.matingpool).get_dna()
-                parentB = random.choice(self.matingpool).get_dna()
-                # Create child by crossover
-
-                orig_child_genes = parentA.crossover(parentB)
-                child = Dron(self.test_data)
-
-                child_genes = drone._dna.mutation(
-                    orig_child_genes)
-
-                child.set_commands(child_genes)
+        for _ in range(self.population_size):
+            # Pick random partners from the mating pool
+            parentA = random.choice(self.matingpool).get_dna()
+            parentB = random.choice(self.matingpool).get_dna()
+            child = Drone(self.test_data)  # Create a new Drone for the child
+            # Crossover and Mutation
+            child_genes = parentA.crossover(parentB)
+            child_genes = child._dna.mutation(child_genes)  # Move mutation here
+            child.set_commands(child_genes)
             new_population.append(child)
-            i += 1
+
         self.matingpool = []
-        self.population = new_population
+        self.population = new_population  # Replace the old population
 
 
-class Dron:
+class Drone:
     def __init__(self, test_data, commands=None):
         self._dna = Dna(commands=commands)
         self._fitness = 0
@@ -118,17 +124,38 @@ class Dron:
         self._fitness /= maxfit
 
     def calculate_fitness(self):
-        distance, path = fastdtw(
-            self.test_data, numpy.array(self.get_dna().get_genes())[:, :-1])
-        # First iteration of fitness
-        self._fitness = 40000 / (distance * 2)
+        target_curve = self.test_data
+        drone_path = numpy.array(self.get_dna().get_genes())[:, :-1]
+
+        # 1. DTW Distance:
+        distance, _ = fastdtw(target_curve, drone_path)
+
+        # 2. Curve-Specific Point Distance Penalty:
+        point_distances = numpy.zeros(len(drone_path))
+        for i, drone_point in enumerate(drone_path):
+            point_distances[i] = numpy.min(numpy.linalg.norm(target_curve - drone_point, axis=1))
+        avg_point_distance = numpy.mean(point_distances)
+        point_distance_penalty = avg_point_distance**2  # Square the penalty for stronger emphasis
+
+        # 3. Combined Fitness:
+        # Lower fitness value is better (minimization problem)
+        fitness = distance + point_distance_penalty  
+        self._fitness = 1 / (fitness + 1e-6)  # Convert to maximize fitness
 
 
 class Dna:
     def __init__(self, commands=None):
         # x y current_rotation
-        # start at beginning of curve, for test circle - 75
-        self.genes = numpy.array([[75, 0, 0]])
+        # Start at the beginning of the curve with correct rotation
+        first_point = test_data[0]
+        second_point = test_data[1]
+
+        delta_x = second_point[0] - first_point[0]
+        delta_y = second_point[1] - first_point[1]
+        initial_angle = numpy.degrees(numpy.arctan2(delta_y, delta_x))  # Calculate angle in degrees
+
+        self.genes = numpy.array([[first_point[0], first_point[1], initial_angle]])  # Include rotation
+        # self.genes = numpy.array([test_data[0], [0]])  # Use the first point of test_data
         self.recall = numpy.array([])
 
         self.genes_length = 50
@@ -163,7 +190,7 @@ class Dna:
             for i in range(1, self.genes_length, 1):
                 self.count += 1
                 random.choice(self.my_list)(
-                    numpy.random.randint(20, 40), numpy.random.randint(20, 40), numpy.random.randint(-30, 30))
+                    numpy.random.randint(1, 40), numpy.random.randint(1, 40), numpy.random.randint(-180, 180))
             # Too old to live
             self.lifespan = True
 
@@ -199,7 +226,7 @@ class Dna:
             # 2% chance to evolve
             if (numpy.random.uniform() < 0.02):
                 random.choice([self.command_rotate, self.command_move])(
-                    numpy.random.randint(20, 40), numpy.random.randint(20, 40), numpy.random.randint(-30, 30), True)
+                    numpy.random.randint(1, 40), numpy.random.randint(1, 40), numpy.random.randint(-180, 180), True)
                 genes[i] = self.recall
         return genes
 
@@ -281,9 +308,34 @@ class TestCurve:
             points = numpy.vstack((points, [x, y]))
 
         return points
+    
+    @staticmethod
+    def create_spiral(center_x=0, center_y=0, num_turns=2, radius_growth=1):
+        theta = numpy.linspace(0, num_turns * 2 * numpy.pi, 360)
+        radius = radius_growth * theta
+        x = center_x + radius * numpy.cos(theta)
+        y = center_y + radius * numpy.sin(theta)
+        return numpy.column_stack((x, y))
+    
+    @staticmethod
+    def create_polynomial(coeffs, x_shift=0, x_scale=1, rotation_angle=0):
+        x_range = numpy.linspace(-1, 1, 100) * x_scale + x_shift   # Shift and scale x-values
+        y_values = numpy.polyval(coeffs, x_range)
 
+        # Rotate the points (same as before)
+        theta = numpy.radians(rotation_angle)
+        c, s = numpy.cos(theta), numpy.sin(theta)
+        rotation_matrix = numpy.array(((c, -s), (s, c)))
+        points = numpy.column_stack((x_range, y_values))
+        rotated_points = numpy.dot(points, rotation_matrix)
+
+        return rotated_points
 
 if __name__ == '__main__':
-    test_data = TestCurve.create_circle(0, 0, 75)
+    # test_data = TestCurve.create_circle(0, 0, 75)
+    test_data = TestCurve.create_spiral(num_turns=0.9, radius_growth=3)  # Adjust parameters as needed
+    # Example usage
+    # coeffs = [0.01, -0.05, 0.1, -0.2, 0.3]  
+    # test_data = TestCurve.create_polynomial(coeffs, x_shift=50, x_scale=25)
     population = Population(test_data)
     population.print_plot()

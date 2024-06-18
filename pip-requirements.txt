@@ -1,7 +1,17 @@
 PySide2
 # OpenGL requirements
-image
 numpy
+scipy
 matplotlib
-# implementation of Dynamic Time Warping
-fastdtw
+# fastdtw
+tslearn
+# tensorflow to utilize GPU
+tensorflow[and-cuda]
+
+mypy
+
+types-Pillow
+types-tensorflow
+
+matplotlib-label-lines
+shapely
